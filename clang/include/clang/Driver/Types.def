@@ -121,3 +121,4 @@ TYPE("hip-fatbin",               HIP_FATBIN,   INVALID,         "hipfb",  phases
 TYPE("api-information",          API_INFO,     INVALID,         "json",   phases::Precompile)
 TYPE("dx-container",             DX_CONTAINER, INVALID,         "dxo",    phases::Compile, phases::Backend)
 TYPE("none",                     Nothing,      INVALID,         nullptr,  phases::Compile, phases::Backend, phases::Assemble, phases::Link)
+TYPE("offload-host-info",        OffloadHostInfo, INVALID,      "json",   phases::Compile, phases::Backend)

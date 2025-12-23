@@ -4907,6 +4907,13 @@ Action *Driver::BuildOffloadingActions(Compilation &C,
         getFinalPhase(Args) == phases::Preprocess))
     return HostAction;
 
+  Action *HostInfoAction = nullptr;
+  if (C.isOffloadingHostKind(Action::OFK_Cuda) &&
+      isa<CompileJobAction>(HostAction) && HostAction->getType() == types::TY_LLVM_BC) {
+    HostInfoAction =
+        C.MakeAction<OffloadHostInfoJobAction>(HostAction, types::TY_OffloadHostInfo);
+  }
+
   ActionList OffloadActions;
   OffloadAction::DeviceDependences DDeps;
 
@@ -4976,6 +4983,17 @@ Action *Driver::BuildOffloadingActions(Compilation &C,
         A->propagateDeviceOffloadInfo(Kind, TCAndArch->second.data(),
                                       TCAndArch->first);
         A = ConstructPhaseAction(C, Args, Phase, A, Kind);
+
+        if (Kind == Action::OFK_Cuda && Phase == phases::Compile &&
+            HostInfoAction && isa<CompileJobAction>(A) &&
+            A->getType() != types::TY_Nothing) {
+          OffloadAction::HostDependence HDep(
+              *HostInfoAction, *C.getSingleOffloadToolChain<Action::OFK_Host>(),
+              TCAndArch->second.data(), Kind);
+          OffloadAction::DeviceDependences DDep;
+          DDep.add(*A, *TCAndArch->first, TCAndArch->second.data(), Kind);
+          A = C.MakeAction<OffloadAction>(HDep, DDep);
+        }
 
         if (isa<CompileJobAction>(A) && isa<CompileJobAction>(HostAction) &&
             Kind == Action::OFK_OpenMP &&

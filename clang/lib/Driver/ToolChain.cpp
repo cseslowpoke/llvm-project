@@ -643,6 +643,7 @@ Tool *ToolChain::getTool(Action::ActionClass AC) const {
   case Action::AnalyzeJobClass:
   case Action::VerifyPCHJobClass:
   case Action::BackendJobClass:
+  case Action::OffloadHostInfoJobClass:
     return getClang();
 
   case Action::OffloadBundlingJobClass:

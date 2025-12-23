@@ -76,9 +76,10 @@ public:
     StaticLibJobClass,
     BinaryAnalyzeJobClass,
     BinaryTranslatorJobClass,
+    OffloadHostInfoJobClass,
 
     JobClassFirst = PreprocessJobClass,
-    JobClassLast = BinaryTranslatorJobClass
+    JobClassLast = OffloadHostInfoJobClass
   };
 
   // The offloading kind determines if this action is binded to a particular
@@ -684,6 +685,17 @@ public:
 
   static bool classof(const Action *A) {
     return A->getKind() == BinaryTranslatorJobClass;
+  }
+};
+
+class OffloadHostInfoJobAction: public JobAction {
+  void anchor() override;
+
+public:
+  OffloadHostInfoJobAction(Action *Input, types::ID Type);
+
+  static bool classof(const Action *A) {
+    return A->getKind() == OffloadHostInfoJobClass;
   }
 };
 

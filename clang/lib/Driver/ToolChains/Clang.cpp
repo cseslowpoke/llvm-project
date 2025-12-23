@@ -4921,6 +4921,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   InputInfoList HostOffloadingInputs;
   const InputInfo *CudaDeviceInput = nullptr;
   const InputInfo *OpenMPDeviceInput = nullptr;
+  const InputInfo *OffloadHostInfoInput = nullptr;
   for (const InputInfo &I : Inputs) {
     if (&I == &Input || I.getType() == types::TY_Nothing) {
       // This is the primary input or contains nothing.
@@ -4934,6 +4935,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       ExtractAPIInputs.push_back(I);
     } else if (IsHostOffloadingAction) {
       HostOffloadingInputs.push_back(I);
+    } else if (I.getType() == types::TY_OffloadHostInfo && !OffloadHostInfoInput) {
+      OffloadHostInfoInput = &I;
     } else if ((IsCuda || IsHIP) && !CudaDeviceInput) {
       CudaDeviceInput = &I;
     } else if (IsOpenMPDevice && !OpenMPDeviceInput) {
@@ -4963,6 +4966,21 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   //
   // FIXME: Implement custom jobs for internal actions.
   CmdArgs.push_back("-cc1");
+
+  if (isa<OffloadHostInfoJobAction>(JA)) {
+    if (Output.isFilename()) {
+      CmdArgs.push_back("-mllvm");
+      CmdArgs.push_back(
+          Args.MakeArgString(Twine("-my-host-pass-output=") + Output.getFilename()));
+    }
+  }
+
+  if (IsCudaDevice && OffloadHostInfoInput) {
+    CmdArgs.push_back("-mllvm");
+    CmdArgs.push_back(
+        Args.MakeArgString(Twine("-my-device-pass-input=") +
+                           OffloadHostInfoInput->getFilename()));
+  }
 
   // Add the "effective" target triple.
   CmdArgs.push_back("-triple");
@@ -5157,6 +5175,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   if (isa<AnalyzeJobAction>(JA)) {
     assert(JA.getType() == types::TY_Plist && "Invalid output type.");
     CmdArgs.push_back("-analyze");
+  } else if (isa<OffloadHostInfoJobAction>(JA)) {
+    CmdArgs.push_back("-emit-llvm");
   } else if (isa<PreprocessJobAction>(JA)) {
     if (Output.getType() == types::TY_Dependencies)
       CmdArgs.push_back("-Eonly");
@@ -7979,7 +7999,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   // Add the "-o out -x type src.c" flags last. This is done primarily to make
   // the -cc1 command easier to edit when reproducing compiler crashes.
-  if (Output.getType() == types::TY_Dependencies) {
+  if (isa<OffloadHostInfoJobAction>(JA)) {
+    CmdArgs.append({"-o", "/dev/null"});
+  } else if (Output.getType() == types::TY_Dependencies) {
     // Handled with other dependency code.
   } else if (Output.isFilename()) {
     if (Output.getType() == clang::driver::types::TY_IFS_CPP ||
