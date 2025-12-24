@@ -66,6 +66,8 @@ add_llvm_component_library(LLVMTransformUtils
   MisExpect.cpp
   ModuleUtils.cpp
   MoveAutoInit.cpp
+  MyDevicePass.cpp
+  MyHostPass.cpp
   NameAnonGlobals.cpp
   PredicateInfo.cpp
   PromoteMemoryToRegister.cpp
