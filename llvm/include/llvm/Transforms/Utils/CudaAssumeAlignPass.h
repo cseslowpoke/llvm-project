@@ -7,7 +7,7 @@ namespace llvm {
 
 class CudaAssumeAlignPass : public PassInfoMixin<CudaAssumeAlignPass> {
 public:
-  PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM);
+  PreservedAnalyses run(Function &F, FunctionAnalysisManager &AM);
   static StringRef name() { return "CudaAssumeAlignPass"; }
 };
 
