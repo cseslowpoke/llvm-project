@@ -82,11 +82,13 @@
 #include "llvm/Transforms/Instrumentation/ThreadSanitizer.h"
 #include "llvm/Transforms/Instrumentation/TypeSanitizer.h"
 #include "llvm/Transforms/ObjCARC.h"
+#include "llvm/Transforms/Scalar/AlignmentFromAssumptions.h"
 #include "llvm/Transforms/Scalar/EarlyCSE.h"
 #include "llvm/Transforms/Scalar/GVN.h"
 #include "llvm/Transforms/Scalar/JumpThreading.h"
 #include "llvm/Transforms/Utils/Debugify.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
+#include "llvm/Transforms/Utils/MyDevicePass.h"
 #include <limits>
 #include <memory>
 #include <optional>
@@ -1055,6 +1057,17 @@ void EmitAssemblyHelper::RunOptimizationPipeline(
                 /*DropTypeTests=*/lowertypetests::DropTestKind::Assume));
           });
 
+    // Run MyDevicePass early for CUDA device compilation so alignment hints
+    // are available for vectorization passes. Follow with AlignmentFromAssumptions
+    // to propagate the alignment info from llvm.assume to load/store instructions.
+    if (LangOpts.CUDAIsDevice)
+      PB.registerPipelineStartEPCallback(
+          [](ModulePassManager &MPM, OptimizationLevel Level) {
+            MPM.addPass(MyDevicePass());
+            MPM.addPass(createModuleToFunctionPassAdaptor(
+                AlignmentFromAssumptionsPass()));
+          });
+
     // Register callbacks to schedule sanitizer passes at the appropriate part
     // of the pipeline.
     if (LangOpts.Sanitize.has(SanitizerKind::LocalBounds))
@@ -1134,6 +1147,9 @@ void EmitAssemblyHelper::RunOptimizationPipeline(
   if (LangOpts.HIPStdPar && !LangOpts.CUDAIsDevice &&
       LangOpts.HIPStdParInterposeAlloc)
     MPM.addPass(HipStdParAllocationInterpositionPass());
+
+  // MyDevicePass is now registered via PipelineStartEPCallback above
+  // so alignment hints are available early for optimization passes.
 
   // Add a verifier pass if requested. We don't have to do this if the action
   // requires code generation because there will already be a verifier pass in

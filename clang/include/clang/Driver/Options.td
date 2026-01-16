@@ -1150,6 +1150,10 @@ def offload_targets_EQ : CommaJoined<["--"], "offload-targets=">,
   Flags<[NoXarchOption]>, Visibility<[ClangOption, CC1Option, FlangOption, FC1Option]>,
   HelpText<"Specify a list of target architectures to use for offloading.">;
 
+def foffload_host_info_json : Flag<["-"], "foffload-host-info-json">,
+  Visibility<[ClangOption]>,
+  HelpText<"Emit CUDA offload host info JSON (via LLVM passes) and forward it to device compilation.">;
+
 def offload_arch_EQ : CommaJoined<["--"], "offload-arch=">,
   Visibility<[ClangOption, FlangOption]>,
   HelpText<"Specify an offloading device architecture for CUDA, HIP, or OpenMP. (e.g. sm_35). "

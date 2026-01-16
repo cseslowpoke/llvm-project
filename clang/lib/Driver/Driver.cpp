@@ -4910,8 +4910,11 @@ Action *Driver::BuildOffloadingActions(Compilation &C,
   Action *HostInfoAction = nullptr;
   if (C.isOffloadingHostKind(Action::OFK_Cuda) &&
       isa<CompileJobAction>(HostAction) && HostAction->getType() == types::TY_LLVM_BC) {
-    HostInfoAction =
-        C.MakeAction<OffloadHostInfoJobAction>(HostAction, types::TY_OffloadHostInfo);
+    if (Args.hasArg(options::OPT_foffload_host_info_json))
+      // Output JSON with host analysis info. Host continues compiling from
+      // source (not from this output) because -x ir doesn't work with CUDA.
+      HostInfoAction =
+          C.MakeAction<OffloadHostInfoJobAction>(HostAction, types::TY_OffloadHostInfo);
   }
 
   ActionList OffloadActions;
@@ -5093,6 +5096,13 @@ Action *Driver::BuildOffloadingActions(Compilation &C,
   bool SingleDeviceOutput = !llvm::any_of(OffloadActions, [](Action *A) {
     return A->getType() == types::TY_Nothing;
   }) && isa<CompileJobAction>(HostAction);
+
+  // When -foffload-host-info-json is enabled, HostInfoAction generates JSON
+  // as a side effect. We do NOT use it as the host dependency because
+  // -x ir with CUDA doesn't correctly handle -fcuda-include-gpubinary embedding.
+  // The host continues compiling from source.
+  (void)HostInfoAction;
+
   OffloadAction::HostDependence HDep(
       *HostAction, *C.getSingleOffloadToolChain<Action::OFK_Host>(),
       /*BoundArch=*/nullptr, SingleDeviceOutput ? DDep : DDeps);

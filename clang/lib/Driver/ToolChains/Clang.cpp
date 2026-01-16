@@ -4965,21 +4965,30 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // Invoke ourselves in -cc1 mode.
   //
   // FIXME: Implement custom jobs for internal actions.
-  CmdArgs.push_back("-cc1");
-
-  if (isa<OffloadHostInfoJobAction>(JA)) {
-    if (Output.isFilename()) {
-      CmdArgs.push_back("-mllvm");
-      CmdArgs.push_back(
-          Args.MakeArgString(Twine("-my-host-pass-output=") + Output.getFilename()));
-    }
+  if (isa<OffloadHostInfoJobAction>(JA) &&
+      Args.hasArg(options::OPT_foffload_host_info_json) && Output.isFilename()) {
+    const char *Opt = Args.MakeArgString(TC.GetProgramPath("opt"));
+    ArgStringList OptArgs;
+    assert(Inputs.size() == 1 && "OffloadHostInfoJobAction expects a single input");
+    OptArgs.push_back(Inputs[0].getFilename());
+    OptArgs.push_back("-passes=function(cuda-assume-align),my-host-pass");
+    // Output JSON for device pass. Use -disable-output since we don't need .bc
+    // (host compiles from source, not from this .bc).
+    OptArgs.push_back(Args.MakeArgString(Twine("-my-host-pass-output=") + Output.getFilename()));
+    OptArgs.push_back("-disable-output");
+    C.addCommand(std::make_unique<Command>(JA, *this, ResponseFileSupport::None(),
+                                           Opt, OptArgs, Inputs, Output));
+    return;
   }
 
-  if (IsCudaDevice && OffloadHostInfoInput) {
+  CmdArgs.push_back("-cc1");
+
+  if (Args.hasArg(options::OPT_foffload_host_info_json) && IsCudaDevice &&
+      OffloadHostInfoInput) {
+    // The JSON file is the OffloadHostInfoInput directly (TY_OffloadHostInfo).
     CmdArgs.push_back("-mllvm");
-    CmdArgs.push_back(
-        Args.MakeArgString(Twine("-my-device-pass-input=") +
-                           OffloadHostInfoInput->getFilename()));
+    CmdArgs.push_back(Args.MakeArgString(Twine("-my-device-pass-input=") +
+                                         OffloadHostInfoInput->getFilename()));
   }
 
   // Add the "effective" target triple.
