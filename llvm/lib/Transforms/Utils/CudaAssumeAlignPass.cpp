@@ -1,6 +1,8 @@
 #include "llvm/Transforms/Utils/CudaAssumeAlignPass.h"
 
 #include "llvm/ADT/SmallPtrSet.h"
+
+#define DEBUG_TYPE "cuda-assume-align"
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
@@ -10,14 +12,13 @@
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/Debug.h"
+#include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
 
 static cl::opt<unsigned> CudaAssumeAlign(
     "cuda-assume-align", cl::Hidden, cl::init(256));
-
-static cl::opt<bool> CudaAssumeAlignVerbose(
-    "cuda-assume-align-verbose", cl::Hidden, cl::init(false));
 
 PreservedAnalyses CudaAssumeAlignPass::run(Function &F,
                                           FunctionAnalysisManager &AM) {
@@ -76,12 +77,8 @@ PreservedAnalyses CudaAssumeAlignPass::run(Function &F,
     (void)NewAssume;
 
     Changed = true;
-    if (CudaAssumeAlignVerbose) {
-      errs() << "CudaAssumeAlignPass: inserted assume align=" << CudaAssumeAlign
-             << " for loaded ptr: ";
-      LoadedPtr->print(errs());
-      errs() << "\n";
-    }
+    LLVM_DEBUG(dbgs() << "CudaAssumeAlignPass: inserted assume align=" << CudaAssumeAlign
+                      << " for loaded ptr: "; LoadedPtr->print(dbgs()); dbgs() << "\n");
   }
 
   return Changed ? PreservedAnalyses::none() : PreservedAnalyses::all();

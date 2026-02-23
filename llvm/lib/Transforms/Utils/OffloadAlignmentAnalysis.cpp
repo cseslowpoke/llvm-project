@@ -9,6 +9,8 @@
 #include "OffloadAlignmentAnalysis.h"
 
 #include "llvm/ADT/SmallVector.h"
+
+#define DEBUG_TYPE "offload-host-analysis"
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/Dominators.h"
@@ -16,6 +18,7 @@
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/Local.h"
 
@@ -155,14 +158,13 @@ OffloadAlignmentAnalyzer::analyzeArgumentAlignment(Value *SlotValue) {
     const Value *CudaMallocOut = isDerivedFromCudaMallocOut(RHS);
     if (CudaMallocOut) {
       AnyCudaMallocDerived = true;
-      errs() << "         rhs derives from cudaMalloc out param: ";
-      CudaMallocOut->print(errs());
-      errs() << "\n";
+      LLVM_DEBUG(dbgs() << "         rhs derives from cudaMalloc out param: ";
+                 CudaMallocOut->print(dbgs()); dbgs() << "\n");
 
       // Use LLVM's getKnownAlignment to compute alignment at this store site.
       // This considers llvm.assume intrinsics and other alignment hints.
       Align KnownAlign = getKnownAlignment(RHS, DL, SI, &AC, &DT);
-      errs() << "         rhs known alignment: " << KnownAlign.value() << "\n";
+      LLVM_DEBUG(dbgs() << "         rhs known alignment: " << KnownAlign.value() << "\n");
 
       // Keep track of the best alignment seen across all stores
       if (KnownAlign.value() > BestKnownAlignment) {
@@ -174,10 +176,10 @@ OffloadAlignmentAnalyzer::analyzeArgumentAlignment(Value *SlotValue) {
   }
 
   if (!FoundStoreIntoSlot) {
-    errs() << "         slot: no store into this alloca found\n";
+    LLVM_DEBUG(dbgs() << "         slot: no store into this alloca found\n");
   } else if (!AnyCudaMallocDerived) {
-    errs() << "         slot: not cudaMalloc-derived (based on stores in this "
-              "function)\n";
+    LLVM_DEBUG(dbgs() << "         slot: not cudaMalloc-derived (based on stores in this "
+                         "function)\n");
   }
 
   Result.IsCudaMallocDerived = AnyCudaMallocDerived;

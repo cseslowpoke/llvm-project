@@ -1,6 +1,8 @@
 #include "llvm/Transforms/Utils/OffloadParamAttributePass.h"
 
 #include "llvm/ADT/SmallVector.h"
+
+#define DEBUG_TYPE "offload-param-attribute"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/Demangle/Demangle.h"
 #include "llvm/IR/Argument.h"
@@ -11,6 +13,7 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/ErrorOr.h"
 #include "llvm/Support/JSON.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -40,7 +43,7 @@ PreservedAnalyses OffloadParamAttributePass::run(Module &M, ModuleAnalysisManage
   ErrorOr<std::unique_ptr<MemoryBuffer>> BufOrErr =
       MemoryBuffer::getFile(OffloadParamAttributeInput);
   if (!BufOrErr) {
-    errs() << "OffloadParamAttributePass: failed to read '" << OffloadParamAttributeInput << "'\n";
+    LLVM_DEBUG(dbgs() << "OffloadParamAttributePass: failed to read '" << OffloadParamAttributeInput << "'\n");
     return PreservedAnalyses::all();
   }
 
@@ -58,8 +61,8 @@ PreservedAnalyses OffloadParamAttributePass::run(Module &M, ModuleAnalysisManage
   if (!Launches)
     return PreservedAnalyses::all();
 
-  errs() << "OffloadParamAttributePass: received valid JSON (launches=" << Launches->size()
-         << ") from '" << OffloadParamAttributeInput << "'\n";
+  LLVM_DEBUG(dbgs() << "OffloadParamAttributePass: received valid JSON (launches=" << Launches->size()
+                    << ") from '" << OffloadParamAttributeInput << "'\n");
 
   // Build map: kernel base name -> (arg index -> alignment)
   StringMap<SmallVector<std::pair<unsigned, unsigned>, 8>> KernelArgAligns;
@@ -125,8 +128,8 @@ PreservedAnalyses OffloadParamAttributePass::run(Module &M, ModuleAnalysisManage
       F.addParamAttr(ArgIdx, Attribute::getWithAlignment(Ctx, Align(Alignment)));
       Changed = true;
 
-      errs() << "OffloadParamAttributePass: added align(" << Alignment << ") to arg "
-             << ArgIdx << " of " << F.getName() << "\n";
+      LLVM_DEBUG(dbgs() << "OffloadParamAttributePass: added align(" << Alignment << ") to arg "
+                        << ArgIdx << " of " << F.getName() << "\n");
     }
   }
 

@@ -18,6 +18,8 @@
 #include "OffloadAlignmentAnalysis.h"  // Internal alignment analysis module
 
 #include "llvm/ADT/SmallPtrSet.h"
+
+#define DEBUG_TYPE "offload-host-analysis"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/ValueTracking.h"
@@ -32,6 +34,7 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/JSON.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/Local.h"
 
@@ -143,10 +146,10 @@ dumpCudaLaunchKernelArgs(CallBase &CB, AssumptionCache &AC, DominatorTree &DT) {
   Function *Caller = CB.getFunction();
   const DataLayout &DL = Caller->getParent()->getDataLayout();
     
-  errs() << "cudaLaunchKernel in function: " << Caller->getName() << "\n";
+  LLVM_DEBUG(dbgs() << "cudaLaunchKernel in function: " << Caller->getName() << "\n");
 
   if (CB.arg_size() <= KernelArgsIndex) {
-    errs() << "  unexpected arg_size=" << CB.arg_size() << " (need >= 6)\n";
+    LLVM_DEBUG(dbgs() << "  unexpected arg_size=" << CB.arg_size() << " (need >= 6)\n");
     return std::nullopt;
   }
 
@@ -155,13 +158,13 @@ dumpCudaLaunchKernelArgs(CallBase &CB, AssumptionCache &AC, DominatorTree &DT) {
   Info.HostFunctionName = Caller->getName().str();
   const Function *KF = resolveKernelFunction(KernelFn);
   if (!KF) {
-    errs() << "    resolved kernel: <unknown>\n";
+    LLVM_DEBUG(dbgs() << "    resolved kernel: <unknown>\n");
     return std::nullopt;
   }
 
-  errs() << "    resolved kernel: " << KF->getName() << "\n";
+  LLVM_DEBUG(dbgs() << "    resolved kernel: " << KF->getName() << "\n");
   if (KF->getName() == Caller->getName()) {
-    errs() << "    caller is stub kernel function\n";
+    LLVM_DEBUG(dbgs() << "    caller is stub kernel function\n");
     return std::nullopt;
   }
 
@@ -175,24 +178,22 @@ dumpCudaLaunchKernelArgs(CallBase &CB, AssumptionCache &AC, DominatorTree &DT) {
     StringRef After = DemangledRef.drop_front(Pos + StubMarker.size());
     StringRef GuessedKernel = After.split('(').first.trim();
     if (!GuessedKernel.empty()) {
-      errs() << "    guessed original kernel (demangled): " << GuessedKernel
-             << "\n";
+      LLVM_DEBUG(dbgs() << "    guessed original kernel (demangled): " << GuessedKernel
+                        << "\n");
       Info.GuessedOriginalKernelName = GuessedKernel.str();
     }
   }
 
   Value *KernelArgs = CB.getArgOperand(KernelArgsIndex);
-  errs() << "  kernel args operand (idx 5):\n";
-  errs() << "    name: "
-         << (KernelArgs->hasName() ? KernelArgs->getName() : "<unnamed>")
-         << "\n";
-  errs() << "    type: ";
-  KernelArgs->getType()->print(errs());
-  errs() << "\n";
+  LLVM_DEBUG(dbgs() << "  kernel args operand (idx 5):\n");
+  LLVM_DEBUG(dbgs() << "    name: "
+                    << (KernelArgs->hasName() ? KernelArgs->getName() : "<unnamed>")
+                    << "\n");
+  LLVM_DEBUG(dbgs() << "    type: "; KernelArgs->getType()->print(dbgs()); dbgs() << "\n");
   Value *Base = KernelArgs->stripPointerCasts();
   auto *AI = dyn_cast<AllocaInst>(Base);
   if (!AI) {
-    errs() << "  kernel args base is not an alloca after stripping casts\n";
+    LLVM_DEBUG(dbgs() << "  kernel args base is not an alloca after stripping casts\n");
     return std::nullopt;
   }
 
@@ -201,13 +202,12 @@ dumpCudaLaunchKernelArgs(CallBase &CB, AssumptionCache &AC, DominatorTree &DT) {
 
   auto *AT = dyn_cast<ArrayType>(AI->getAllocatedType());
   if (!AT) {
-    errs() << "  kernel args alloca is not an array: ";
-    AI->getAllocatedType()->print(errs());
-    errs() << "\n";
+    LLVM_DEBUG(dbgs() << "  kernel args alloca is not an array: ";
+               AI->getAllocatedType()->print(dbgs()); dbgs() << "\n");
     return std::nullopt;
   }
 
-  errs() << "  kernel args array elements (from stores):\n";
+  LLVM_DEBUG(dbgs() << "  kernel args array elements (from stores):\n");
   SmallVector<std::pair<unsigned, Value *>, 16> IndexToValue;
 
   unsigned TotalStores = 0;
@@ -258,8 +258,8 @@ dumpCudaLaunchKernelArgs(CallBase &CB, AssumptionCache &AC, DominatorTree &DT) {
     ++MatchingStores;
   }
 
-  errs() << "  store scan: total=" << TotalStores
-         << " matching=" << MatchingStores << "\n";
+  LLVM_DEBUG(dbgs() << "  store scan: total=" << TotalStores
+                    << " matching=" << MatchingStores << "\n");
 
   for (const auto &IV : IndexToValue) {
     CudaKernelArgInfo Arg;
@@ -273,12 +273,10 @@ dumpCudaLaunchKernelArgs(CallBase &CB, AssumptionCache &AC, DominatorTree &DT) {
       Arg.SlotTypeStr = RSO.str();
     }
 
-    errs() << "    [" << IV.first << "] stored value: ";
-    IV.second->print(errs());
-    errs() << "\n";
-    errs() << "         type: ";
-    IV.second->getType()->print(errs());
-    errs() << "\n";
+    LLVM_DEBUG(dbgs() << "    [" << IV.first << "] stored value: ";
+               IV.second->print(dbgs()); dbgs() << "\n");
+    LLVM_DEBUG(dbgs() << "         type: ";
+               IV.second->getType()->print(dbgs()); dbgs() << "\n");
 
     // Delegate alignment analysis to the internal OffloadAlignmentAnalyzer.
     // This checks if the argument derives from cudaMalloc and computes
@@ -399,8 +397,8 @@ PreservedAnalyses OffloadHostAnalysisPass::run(Module &M, ModuleAnalysisManager 
       OS << formatv("{0:2}\n", json::Value(std::move(Root)));
     }
   } else {
-    // If no output file specified, print to stderr for debugging
-    errs() << formatv("{0:2}\n", json::Value(std::move(Root)));
+    // If no output file specified, print to debug stream
+    LLVM_DEBUG(dbgs() << formatv("{0:2}\n", json::Value(std::move(Root))));
   }
 
   // This is an analysis pass; it doesn't modify the IR.

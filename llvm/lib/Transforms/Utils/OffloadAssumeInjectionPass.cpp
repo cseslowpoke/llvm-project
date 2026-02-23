@@ -1,6 +1,8 @@
 #include "llvm/Transforms/Utils/OffloadAssumeInjectionPass.h"
 
 #include "llvm/ADT/SmallVector.h"
+
+#define DEBUG_TYPE "offload-assume-injection"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/Demangle/Demangle.h"
 #include "llvm/IR/Argument.h"
@@ -13,6 +15,7 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/ErrorOr.h"
 #include "llvm/Support/JSON.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -24,48 +27,49 @@ static void validateOffloadAssumeInjectionInput(StringRef Path) {
 
   ErrorOr<std::unique_ptr<MemoryBuffer>> BufOrErr = MemoryBuffer::getFile(Path);
   if (!BufOrErr) {
-    errs() << "OffloadAssumeInjectionPass: failed to read input '" << Path
-           << "': " << BufOrErr.getError().message() << "\n";
+    LLVM_DEBUG(dbgs() << "OffloadAssumeInjectionPass: failed to read input '" << Path
+                      << "': " << BufOrErr.getError().message() << "\n");
     return;
   }
 
   Expected<json::Value> Parsed = json::parse(BufOrErr.get()->getBuffer());
   if (!Parsed) {
-    errs() << "OffloadAssumeInjectionPass: invalid JSON in '" << Path << "': ";
-    logAllUnhandledErrors(Parsed.takeError(), errs());
-    errs() << "\n";
+    LLVM_DEBUG(dbgs() << "OffloadAssumeInjectionPass: invalid JSON in '" << Path << "': ";
+               logAllUnhandledErrors(Parsed.takeError(), dbgs()); dbgs() << "\n");
     return;
   }
 
   json::Object *Root = Parsed->getAsObject();
   if (!Root) {
-    errs() << "OffloadAssumeInjectionPass: JSON root is not an object in '" << Path << "'\n";
+    LLVM_DEBUG(dbgs() << "OffloadAssumeInjectionPass: JSON root is not an object in '" << Path << "'\n");
     return;
   }
 
   json::Array *Launches = Root->getArray("launches");
   if (!Launches) {
-    errs() << "OffloadAssumeInjectionPass: JSON missing key 'launches' (or not an array) in '"
-           << Path << "'\n";
+    LLVM_DEBUG(dbgs() << "OffloadAssumeInjectionPass: JSON missing key 'launches' (or not an array) in '"
+                      << Path << "'\n");
     return;
   }
 
-  errs() << "OffloadAssumeInjectionPass: received valid JSON (launches=" << Launches->size()
-         << ") from '" << Path << "'\n";
-  for (const json::Value &LV : *Launches) {
-    const json::Object *LO = LV.getAsObject();
-    if (!LO)
-      continue;
+  LLVM_DEBUG(dbgs() << "OffloadAssumeInjectionPass: received valid JSON (launches=" << Launches->size()
+                    << ") from '" << Path << "'\n");
+  LLVM_DEBUG(
+    for (const json::Value &LV : *Launches) {
+      const json::Object *LO = LV.getAsObject();
+      if (!LO)
+        continue;
 
-    StringRef HostFn = LO->getString("host_function").value_or("<unknown>");
-    StringRef Kernel =
-        LO->getString("guessed_original_kernel").value_or("<unknown>");
-    const json::Array *Args = LO->getArray("args");
-    size_t ArgCount = Args ? Args->size() : 0;
+      StringRef HostFn = LO->getString("host_function").value_or("<unknown>");
+      StringRef Kernel =
+          LO->getString("guessed_original_kernel").value_or("<unknown>");
+      const json::Array *Args = LO->getArray("args");
+      size_t ArgCount = Args ? Args->size() : 0;
 
-    errs() << "  launch: host_function=" << HostFn << " kernel=" << Kernel
-           << " args=" << ArgCount << "\n";
-  }
+      dbgs() << "  launch: host_function=" << HostFn << " kernel=" << Kernel
+             << " args=" << ArgCount << "\n";
+    }
+  );
 }
 
 static cl::opt<std::string> OffloadAssumeInjectionInput(
@@ -96,7 +100,7 @@ PreservedAnalyses OffloadAssumeInjectionPass::run(Module &M, ModuleAnalysisManag
   ErrorOr<std::unique_ptr<MemoryBuffer>> BufOrErr =
       MemoryBuffer::getFile(OffloadAssumeInjectionInput);
   if (!BufOrErr) {
-    errs() << "OffloadAssumeInjectionPass: failed to read '" << OffloadAssumeInjectionInput << "'\n";
+    LLVM_DEBUG(dbgs() << "OffloadAssumeInjectionPass: failed to read '" << OffloadAssumeInjectionInput << "'\n");
     return PreservedAnalyses::all();
   }
 
