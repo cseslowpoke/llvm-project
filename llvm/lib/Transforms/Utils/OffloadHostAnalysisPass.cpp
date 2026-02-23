@@ -1,5 +1,21 @@
+//===- OffloadHostAnalysisPass.cpp - Host-side kernel launch analysis ----===//
+//
+// This pass analyzes cudaLaunchKernel calls on the host side to extract
+// information about kernel arguments, particularly their alignment properties.
+// The analysis results are output as JSON for consumption by device-side passes
+// (OffloadAssumeInjectionPass, OffloadParamAttributePass).
+//
+// Architecture:
+// - This pass runs on HOST code (not device code)
+// - It finds cudaLaunchKernel calls and analyzes the kernel args array
+// - For each argument, it checks if it derives from cudaMalloc
+// - Alignment analysis is delegated to OffloadAlignmentAnalyzer (internal module)
+// - Results are written to JSON file specified by -offload-host-analysis-output
+//
+//===----------------------------------------------------------------------===//
+
 #include "llvm/Transforms/Utils/OffloadHostAnalysisPass.h"
-#include "OffloadAlignmentAnalysis.h"
+#include "OffloadAlignmentAnalysis.h"  // Internal alignment analysis module
 
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
@@ -24,9 +40,14 @@
 
 using namespace llvm;
 
+/// Command-line option to specify the output JSON file path.
+/// This file will contain kernel launch information for device-side passes.
+/// Usage: -mllvm -offload-host-analysis-output=/path/to/output.json
 static cl::opt<std::string> OffloadHostAnalysisOutput(
     "offload-host-analysis-output", cl::Hidden, cl::init(""));
 
+/// Check if a call instruction is a cudaLaunchKernel call.
+/// cudaLaunchKernel is the runtime API used to launch CUDA kernels.
 static bool isCudaLaunchKernelCall(CallBase &CB) {
   Function *Callee = CB.getCalledFunction();
   if (!Callee)
@@ -37,6 +58,15 @@ static bool isCudaLaunchKernelCall(CallBase &CB) {
   return true;
 }
 
+/// Resolve the kernel function from the first argument of cudaLaunchKernel.
+///
+/// cudaLaunchKernel signature:
+///   cudaError_t cudaLaunchKernel(const void *func, dim3 gridDim, dim3 blockDim,
+///                                 void **args, size_t sharedMem, cudaStream_t stream)
+///
+/// The first argument (func) is a pointer to the kernel function, but it may
+/// be wrapped in casts, aliases, or constant expressions. This function
+/// traverses through these to find the actual Function.
 static const Function *resolveKernelFunction(Value *V) {
   SmallPtrSet<const Value *, 32> Visited;
   SmallVector<Value *, 16> Worklist;
@@ -51,9 +81,11 @@ static const Function *resolveKernelFunction(Value *V) {
     if (!Visited.insert(Cur).second)
       continue; 
 
+    // Found the kernel function directly
     if (auto *F = dyn_cast<Function>(Cur))
       return F;
 
+    // Handle global aliases (kernel may be aliased)
     if (auto *GA = dyn_cast<GlobalAlias>(Cur)) {
       if (const GlobalObject *GO = GA->getAliaseeObject())
         if (const auto *F = dyn_cast<Function>(GO))
@@ -61,6 +93,7 @@ static const Function *resolveKernelFunction(Value *V) {
       continue;
     }
 
+    // Handle constant expressions (e.g., bitcast)
     if (auto *CE = dyn_cast<ConstantExpr>(Cur)) {
       if (CE->getNumOperands() > 0)
         Worklist.push_back(CE->getOperand(0));
@@ -71,25 +104,41 @@ static const Function *resolveKernelFunction(Value *V) {
   return nullptr;
 }
 
+/// Information about a single kernel argument extracted from cudaLaunchKernel.
 struct CudaKernelArgInfo {
-  unsigned Index = 0;
-  std::string SlotName;
-  std::string SlotTypeStr;
-  bool IsCudaMallocDerived = false;
-  std::string CudaMallocOutParamName;
-  uint64_t KnownAlignment = 0;
+  unsigned Index = 0;                    ///< Argument index (0-based)
+  std::string SlotName;                  ///< Name of the slot alloca (if any)
+  std::string SlotTypeStr;               ///< LLVM type string of the slot value
+  bool IsCudaMallocDerived = false;      ///< True if derived from cudaMalloc
+  std::string CudaMallocOutParamName;    ///< Name of cudaMalloc output param
+  uint64_t KnownAlignment = 0;           ///< Best known alignment in bytes
 };
 
+/// Information about a cudaLaunchKernel call site.
 struct CudaLaunchKernelInfo {
-  std::string HostFunctionName;
-  std::string ResolvedKernelMangled;
-  std::string GuessedOriginalKernelName;
-  std::string KernelArgsAllocaName;
-  SmallVector<CudaKernelArgInfo, 16> Args;
+  std::string HostFunctionName;          ///< Function containing the launch
+  std::string ResolvedKernelMangled;     ///< Mangled name of the kernel
+  std::string GuessedOriginalKernelName; ///< Demangled kernel name (guessed)
+  std::string KernelArgsAllocaName;      ///< Name of the args array alloca
+  SmallVector<CudaKernelArgInfo, 16> Args; ///< Per-argument information
 };
 
+/// Analyze a cudaLaunchKernel call and extract argument information.
+///
+/// This function:
+/// 1. Resolves the kernel function from argument 0
+/// 2. Extracts the kernel args array from argument 5 (index 5 = args parameter)
+/// 3. Scans stores into the args array to find individual argument values
+/// 4. For each argument, analyzes alignment using OffloadAlignmentAnalyzer
+///
+/// @param CB  The cudaLaunchKernel call instruction
+/// @param AC  AssumptionCache for alignment analysis
+/// @param DT  DominatorTree for alignment analysis
+/// @return    Optional launch info, or nullopt if analysis fails
 static std::optional<CudaLaunchKernelInfo>
 dumpCudaLaunchKernelArgs(CallBase &CB, AssumptionCache &AC, DominatorTree &DT) {
+  // cudaLaunchKernel args: func, gridDim, blockDim, args, sharedMem, stream
+  // Index 5 is the 'args' parameter (void** pointing to argument array)
   constexpr unsigned KernelArgsIndex = 5;
   Function *Caller = CB.getFunction();
   const DataLayout &DL = Caller->getParent()->getDataLayout();
@@ -164,7 +213,9 @@ dumpCudaLaunchKernelArgs(CallBase &CB, AssumptionCache &AC, DominatorTree &DT) {
   unsigned TotalStores = 0;
   unsigned MatchingStores = 0;
 
-  // Create alignment analyzer for this function
+  // Create alignment analyzer for this function.
+  // This is an internal module that handles cudaMalloc tracking and
+  // alignment computation. See OffloadAlignmentAnalysis.h for details.
   OffloadAlignmentAnalyzer AlignAnalyzer(*Caller, AC, DT);
 
   auto RecordStore = [&](unsigned Index, Value *Stored) {
@@ -173,6 +224,13 @@ dumpCudaLaunchKernelArgs(CallBase &CB, AssumptionCache &AC, DominatorTree &DT) {
 
   const uint64_t PtrSize = DL.getPointerTypeSize(KernelArgs->getType());
 
+  // Scan all stores in the function to find stores into the kernel args array.
+  // The args array is set up like:
+  //   %args = alloca [N x ptr]
+  //   store ptr %arg0_slot, ptr getelementptr([N x ptr], ptr %args, 0, 0)
+  //   store ptr %arg1_slot, ptr getelementptr([N x ptr], ptr %args, 0, 1)
+  //   ...
+  // We use GetPointerBaseWithConstantOffset to match stores to array elements.
   for (Instruction &I : instructions(*Caller)) {
     auto *SI = dyn_cast<StoreInst>(&I);
     if (!SI)
@@ -180,6 +238,7 @@ dumpCudaLaunchKernelArgs(CallBase &CB, AssumptionCache &AC, DominatorTree &DT) {
 
     ++TotalStores;
 
+    // Check if this store targets the kernel args array
     int64_t ByteOffset = 0;
     const Value *BasePtr = GetPointerBaseWithConstantOffset(
         SI->getPointerOperand(), ByteOffset, DL);
@@ -189,6 +248,7 @@ dumpCudaLaunchKernelArgs(CallBase &CB, AssumptionCache &AC, DominatorTree &DT) {
     if (ByteOffset < 0)
       continue;
 
+    // Convert byte offset to array index
     if (PtrSize == 0 || (static_cast<uint64_t>(ByteOffset) % PtrSize) != 0)
       continue;
 
@@ -220,7 +280,9 @@ dumpCudaLaunchKernelArgs(CallBase &CB, AssumptionCache &AC, DominatorTree &DT) {
     IV.second->getType()->print(errs());
     errs() << "\n";
 
-    // Analyze alignment using the internal analyzer
+    // Delegate alignment analysis to the internal OffloadAlignmentAnalyzer.
+    // This checks if the argument derives from cudaMalloc and computes
+    // the known alignment using LLVM's getKnownAlignment.
     KernelArgAlignmentInfo AlignInfo = AlignAnalyzer.analyzeArgumentAlignment(IV.second);
     Arg.IsCudaMallocDerived = AlignInfo.IsCudaMallocDerived;
     Arg.CudaMallocOutParamName = AlignInfo.CudaMallocOutParamName;
@@ -232,18 +294,43 @@ dumpCudaLaunchKernelArgs(CallBase &CB, AssumptionCache &AC, DominatorTree &DT) {
   return Info;
 }
 
+/// Main entry point for the OffloadHostAnalysisPass.
+///
+/// This pass scans the module for cudaLaunchKernel calls, analyzes each one
+/// to extract kernel argument information (especially alignment), and outputs
+/// the results as JSON for consumption by device-side passes.
+///
+/// The JSON output format:
+/// {
+///   "launches": [
+///     {
+///       "host_function": "main",
+///       "resolved_kernel_mangled": "_Z6kernelPfS_i",
+///       "guessed_original_kernel": "kernel",
+///       "args": [
+///         { "index": 0, "cudaMallocDerived": true, "knownAlignment": 256 },
+///         ...
+///       ]
+///     }
+///   ]
+/// }
 PreservedAnalyses OffloadHostAnalysisPass::run(Module &M, ModuleAnalysisManager &AM) {
   auto &FAMProxy = AM.getResult<FunctionAnalysisManagerModuleProxy>(M);
   FunctionAnalysisManager &FAM = FAMProxy.getManager();
 
   SmallVector<CallBase *, 16> CudaLaunchKernels;
   SmallVector<CudaLaunchKernelInfo, 16> LaunchInfos;
+
+  // Scan all functions in the module for cudaLaunchKernel calls.
+  // We handle both CallInst and InvokeInst (for exception-safe code).
   for (auto &F : M) {
     if (F.isDeclaration())
       continue;
 
+    // Get analysis results needed for alignment computation
     auto &AC = FAM.getResult<AssumptionAnalysis>(F);
     auto &DT = FAM.getResult<DominatorTreeAnalysis>(F);
+
     for (auto &BB: F) {
       for (auto &I: BB) {
         if (auto *CI = dyn_cast<CallInst>(&I)) {
@@ -267,6 +354,8 @@ PreservedAnalyses OffloadHostAnalysisPass::run(Module &M, ModuleAnalysisManager 
     }
   }
 
+  // Build JSON output from collected launch information.
+  // This JSON will be consumed by device-side passes to apply optimizations.
   json::Array Launches;
   for (const auto &LI : LaunchInfos) {
     json::Object Launch;
@@ -298,6 +387,8 @@ PreservedAnalyses OffloadHostAnalysisPass::run(Module &M, ModuleAnalysisManager 
   json::Object Root;
   Root["launches"] = std::move(Launches);
 
+  // Write JSON output to file or stderr.
+  // The file path is specified via -offload-host-analysis-output option.
   if (!OffloadHostAnalysisOutput.empty()) {
     std::error_code EC;
     raw_fd_ostream OS(OffloadHostAnalysisOutput, EC, sys::fs::OF_Text);
@@ -308,7 +399,10 @@ PreservedAnalyses OffloadHostAnalysisPass::run(Module &M, ModuleAnalysisManager 
       OS << formatv("{0:2}\n", json::Value(std::move(Root)));
     }
   } else {
+    // If no output file specified, print to stderr for debugging
     errs() << formatv("{0:2}\n", json::Value(std::move(Root)));
   }
+
+  // This is an analysis pass; it doesn't modify the IR.
   return PreservedAnalyses::all();
 }
