@@ -1,11 +1,11 @@
-#ifndef LLVM_TRANSFORMS_UTILS_MYDEVICEPASS_H
-#define LLVM_TRANSFORMS_UTILS_MYDEVICEPASS_H
+#ifndef LLVM_TRANSFORMS_UTILS_OFFLOADASSUMEINJECTIONPASS_H
+#define LLVM_TRANSFORMS_UTILS_OFFLOADASSUMEINJECTIONPASS_H
 
 #include "llvm/IR/PassManager.h"
 
 namespace llvm {
 
-class MyDevicePass : public PassInfoMixin<MyDevicePass> {
+class OffloadAssumeInjectionPass : public PassInfoMixin<OffloadAssumeInjectionPass> {
 public:
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM);
 };

@@ -1,4 +1,4 @@
-#include "llvm/Transforms/Utils/MyDevicePass2.h"
+#include "llvm/Transforms/Utils/OffloadParamAttributePass.h"
 
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
@@ -16,9 +16,9 @@
 
 using namespace llvm;
 
-static cl::opt<std::string> MyDevicePass2Input(
-    "my-device-pass2-input", cl::Hidden, cl::init(""),
-    cl::desc("JSON file with kernel launch info for MyDevicePass2"));
+static cl::opt<std::string> OffloadParamAttributeInput(
+    "offload-param-attribute-input", cl::Hidden, cl::init(""),
+    cl::desc("JSON file with kernel launch info for OffloadParamAttributePass"));
 
 /// Extract the base function name from a demangled name.
 static StringRef extractKernelBaseName(StringRef Demangled) {
@@ -30,17 +30,17 @@ static StringRef extractKernelBaseName(StringRef Demangled) {
   return Demangled;
 }
 
-PreservedAnalyses MyDevicePass2::run(Module &M, ModuleAnalysisManager &AM) {
+PreservedAnalyses OffloadParamAttributePass::run(Module &M, ModuleAnalysisManager &AM) {
   (void)AM;
 
-  if (MyDevicePass2Input.empty())
+  if (OffloadParamAttributeInput.empty())
     return PreservedAnalyses::all();
 
   // Read JSON file
   ErrorOr<std::unique_ptr<MemoryBuffer>> BufOrErr =
-      MemoryBuffer::getFile(MyDevicePass2Input);
+      MemoryBuffer::getFile(OffloadParamAttributeInput);
   if (!BufOrErr) {
-    errs() << "MyDevicePass2: failed to read '" << MyDevicePass2Input << "'\n";
+    errs() << "OffloadParamAttributePass: failed to read '" << OffloadParamAttributeInput << "'\n";
     return PreservedAnalyses::all();
   }
 
@@ -58,8 +58,8 @@ PreservedAnalyses MyDevicePass2::run(Module &M, ModuleAnalysisManager &AM) {
   if (!Launches)
     return PreservedAnalyses::all();
 
-  errs() << "MyDevicePass2: received valid JSON (launches=" << Launches->size()
-         << ") from '" << MyDevicePass2Input << "'\n";
+  errs() << "OffloadParamAttributePass: received valid JSON (launches=" << Launches->size()
+         << ") from '" << OffloadParamAttributeInput << "'\n";
 
   // Build map: kernel base name -> (arg index -> alignment)
   StringMap<SmallVector<std::pair<unsigned, unsigned>, 8>> KernelArgAligns;
@@ -125,7 +125,7 @@ PreservedAnalyses MyDevicePass2::run(Module &M, ModuleAnalysisManager &AM) {
       F.addParamAttr(ArgIdx, Attribute::getWithAlignment(Ctx, Align(Alignment)));
       Changed = true;
 
-      errs() << "MyDevicePass2: added align(" << Alignment << ") to arg "
+      errs() << "OffloadParamAttributePass: added align(" << Alignment << ") to arg "
              << ArgIdx << " of " << F.getName() << "\n";
     }
   }

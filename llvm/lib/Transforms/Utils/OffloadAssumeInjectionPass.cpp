@@ -1,4 +1,4 @@
-#include "llvm/Transforms/Utils/MyDevicePass.h"
+#include "llvm/Transforms/Utils/OffloadAssumeInjectionPass.h"
 
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
@@ -18,20 +18,20 @@
 
 using namespace llvm;
 
-static void validateMyDevicePassInput(StringRef Path) {
+static void validateOffloadAssumeInjectionInput(StringRef Path) {
   if (Path.empty())
     return;
 
   ErrorOr<std::unique_ptr<MemoryBuffer>> BufOrErr = MemoryBuffer::getFile(Path);
   if (!BufOrErr) {
-    errs() << "MyDevicePass: failed to read input '" << Path
+    errs() << "OffloadAssumeInjectionPass: failed to read input '" << Path
            << "': " << BufOrErr.getError().message() << "\n";
     return;
   }
 
   Expected<json::Value> Parsed = json::parse(BufOrErr.get()->getBuffer());
   if (!Parsed) {
-    errs() << "MyDevicePass: invalid JSON in '" << Path << "': ";
+    errs() << "OffloadAssumeInjectionPass: invalid JSON in '" << Path << "': ";
     logAllUnhandledErrors(Parsed.takeError(), errs());
     errs() << "\n";
     return;
@@ -39,18 +39,18 @@ static void validateMyDevicePassInput(StringRef Path) {
 
   json::Object *Root = Parsed->getAsObject();
   if (!Root) {
-    errs() << "MyDevicePass: JSON root is not an object in '" << Path << "'\n";
+    errs() << "OffloadAssumeInjectionPass: JSON root is not an object in '" << Path << "'\n";
     return;
   }
 
   json::Array *Launches = Root->getArray("launches");
   if (!Launches) {
-    errs() << "MyDevicePass: JSON missing key 'launches' (or not an array) in '"
+    errs() << "OffloadAssumeInjectionPass: JSON missing key 'launches' (or not an array) in '"
            << Path << "'\n";
     return;
   }
 
-  errs() << "MyDevicePass: received valid JSON (launches=" << Launches->size()
+  errs() << "OffloadAssumeInjectionPass: received valid JSON (launches=" << Launches->size()
          << ") from '" << Path << "'\n";
   for (const json::Value &LV : *Launches) {
     const json::Object *LO = LV.getAsObject();
@@ -68,9 +68,9 @@ static void validateMyDevicePassInput(StringRef Path) {
   }
 }
 
-static cl::opt<std::string> MyDevicePassInput(
-    "my-device-pass-input", cl::Hidden, cl::init(""),
-    cl::callback([](const std::string &V) { validateMyDevicePassInput(V); }));
+static cl::opt<std::string> OffloadAssumeInjectionInput(
+    "offload-assume-injection-input", cl::Hidden, cl::init(""),
+    cl::callback([](const std::string &V) { validateOffloadAssumeInjectionInput(V); }));
 
 /// Extract the base function name from a demangled name.
 /// e.g., "Fan1(float*, float*, int, int)" -> "Fan1"
@@ -86,17 +86,17 @@ static StringRef extractKernelBaseName(StringRef Demangled) {
   return Demangled;
 }
 
-PreservedAnalyses MyDevicePass::run(Module &M, ModuleAnalysisManager &AM) {
+PreservedAnalyses OffloadAssumeInjectionPass::run(Module &M, ModuleAnalysisManager &AM) {
   (void)AM;
 
-  if (MyDevicePassInput.empty())
+  if (OffloadAssumeInjectionInput.empty())
     return PreservedAnalyses::all();
 
   // Read JSON file
   ErrorOr<std::unique_ptr<MemoryBuffer>> BufOrErr =
-      MemoryBuffer::getFile(MyDevicePassInput);
+      MemoryBuffer::getFile(OffloadAssumeInjectionInput);
   if (!BufOrErr) {
-    errs() << "MyDevicePass: failed to read '" << MyDevicePassInput << "'\n";
+    errs() << "OffloadAssumeInjectionPass: failed to read '" << OffloadAssumeInjectionInput << "'\n";
     return PreservedAnalyses::all();
   }
 

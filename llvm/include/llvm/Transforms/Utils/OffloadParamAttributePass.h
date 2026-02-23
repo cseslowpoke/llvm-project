@@ -1,14 +1,13 @@
-#ifndef LLVM_TRANSFORMS_UTILS_MYDEVICEPASS2_H
-#define LLVM_TRANSFORMS_UTILS_MYDEVICEPASS2_H
+#ifndef LLVM_TRANSFORMS_UTILS_OFFLOADPARAMATTRIBUTEPASS_H
+#define LLVM_TRANSFORMS_UTILS_OFFLOADPARAMATTRIBUTEPASS_H
 
 #include "llvm/IR/PassManager.h"
 
 namespace llvm {
 
-/// MyDevicePass2 - Restores readonly/nocapture attributes for kernel pointer
-/// arguments that are only read from. This pass should run AFTER MyDevicePass
-/// to fix attribute inference issues caused by llvm.assume insertion.
-class MyDevicePass2 : public PassInfoMixin<MyDevicePass2> {
+/// OffloadParamAttributePass - Adds alignment and other attributes to kernel
+/// pointer parameters based on host-side analysis results from JSON input.
+class OffloadParamAttributePass : public PassInfoMixin<OffloadParamAttributePass> {
 public:
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM);
 };

@@ -88,8 +88,8 @@
 #include "llvm/Transforms/Scalar/JumpThreading.h"
 #include "llvm/Transforms/Utils/Debugify.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
-#include "llvm/Transforms/Utils/MyDevicePass.h"
-#include "llvm/Transforms/Utils/MyDevicePass2.h"
+#include "llvm/Transforms/Utils/OffloadAssumeInjectionPass.h"
+#include "llvm/Transforms/Utils/OffloadParamAttributePass.h"
 #include "llvm/Transforms/IPO/InferFunctionAttrs.h"
 #include <limits>
 #include <memory>
@@ -1059,14 +1059,14 @@ void EmitAssemblyHelper::RunOptimizationPipeline(
                 /*DropTypeTests=*/lowertypetests::DropTestKind::Assume));
           });
 
-    // Run MyDevicePass early for CUDA device compilation so alignment hints
-    // are available for vectorization passes. Follow with AlignmentFromAssumptions
-    // to propagate the alignment info from llvm.assume to load/store instructions.
+    // Run OffloadParamAttributePass early for CUDA device compilation so alignment
+    // attributes are available for optimization passes. Follow with AlignmentFromAssumptions
+    // to propagate the alignment info to load/store instructions.
     if (LangOpts.CUDAIsDevice)
       PB.registerPipelineStartEPCallback(
           [](ModulePassManager &MPM, OptimizationLevel Level) {
             // MPM.addPass(InferFunctionAttrsPass());
-            MPM.addPass(MyDevicePass2());
+            MPM.addPass(OffloadParamAttributePass());
             MPM.addPass(createModuleToFunctionPassAdaptor(
                 AlignmentFromAssumptionsPass()));
           });
@@ -1151,8 +1151,8 @@ void EmitAssemblyHelper::RunOptimizationPipeline(
       LangOpts.HIPStdParInterposeAlloc)
     MPM.addPass(HipStdParAllocationInterpositionPass());
 
-  // MyDevicePass is now registered via PipelineStartEPCallback above
-  // so alignment hints are available early for optimization passes.
+  // OffloadParamAttributePass is now registered via PipelineStartEPCallback above
+  // so alignment attributes are available early for optimization passes.
 
   // Add a verifier pass if requested. We don't have to do this if the action
   // requires code generation because there will already be a verifier pass in

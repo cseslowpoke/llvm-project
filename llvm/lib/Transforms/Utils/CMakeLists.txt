@@ -66,9 +66,9 @@ add_llvm_component_library(LLVMTransformUtils
   MisExpect.cpp
   ModuleUtils.cpp
   MoveAutoInit.cpp
-  MyDevicePass.cpp
-  MyDevicePass2.cpp
-  MyHostPass.cpp
+  OffloadAssumeInjectionPass.cpp
+  OffloadParamAttributePass.cpp
+  OffloadHostAnalysisPass.cpp
   CudaAssumeAlignPass.cpp
   NameAnonGlobals.cpp
   PredicateInfo.cpp

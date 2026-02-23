@@ -4971,10 +4971,10 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     ArgStringList OptArgs;
     assert(Inputs.size() == 1 && "OffloadHostInfoJobAction expects a single input");
     OptArgs.push_back(Inputs[0].getFilename());
-    OptArgs.push_back("-passes=function(cuda-assume-align),my-host-pass");
+    OptArgs.push_back("-passes=function(cuda-assume-align),offload-host-analysis");
     // Output JSON for device pass. Use -disable-output since we don't need .bc
     // (host compiles from source, not from this .bc).
-    OptArgs.push_back(Args.MakeArgString(Twine("-my-host-pass-output=") + Output.getFilename()));
+    OptArgs.push_back(Args.MakeArgString(Twine("-offload-host-analysis-output=") + Output.getFilename()));
     OptArgs.push_back("-disable-output");
     C.addCommand(std::make_unique<Command>(JA, *this, ResponseFileSupport::None(),
                                            Opt, OptArgs, Inputs, Output));
@@ -4987,7 +4987,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       OffloadHostInfoInput) {
     // The JSON file is the OffloadHostInfoInput directly (TY_OffloadHostInfo).
     CmdArgs.push_back("-mllvm");
-    CmdArgs.push_back(Args.MakeArgString(Twine("-my-device-pass2-input=") +
+    CmdArgs.push_back(Args.MakeArgString(Twine("-offload-param-attribute-input=") +
                                          OffloadHostInfoInput->getFilename()));
   }
 

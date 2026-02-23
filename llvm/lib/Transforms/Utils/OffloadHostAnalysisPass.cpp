@@ -1,4 +1,4 @@
-#include "llvm/Transforms/Utils/MyHostPass.h"
+#include "llvm/Transforms/Utils/OffloadHostAnalysisPass.h"
 
 #include "llvm/IR/Module.h"
 #include "llvm/ADT/SmallVector.h"
@@ -23,8 +23,8 @@
 
 using namespace llvm;
 
-static cl::opt<std::string> MyHostPassOutput(
-    "my-host-pass-output", cl::Hidden, cl::init(""));
+static cl::opt<std::string> OffloadHostAnalysisOutput(
+    "offload-host-analysis-output", cl::Hidden, cl::init(""));
 
 static bool isCudaLaunchKernelCall(CallBase &CB) {
   Function *Callee = CB.getCalledFunction();
@@ -322,7 +322,7 @@ dumpCudaLaunchKernelArgs(CallBase &CB, AssumptionCache &AC, DominatorTree &DT) {
   return Info;
 }
 
-PreservedAnalyses MyHostPass::run(Module &M, ModuleAnalysisManager &AM) {
+PreservedAnalyses OffloadHostAnalysisPass::run(Module &M, ModuleAnalysisManager &AM) {
   auto &FAMProxy = AM.getResult<FunctionAnalysisManagerModuleProxy>(M);
   FunctionAnalysisManager &FAM = FAMProxy.getManager();
 
@@ -388,11 +388,11 @@ PreservedAnalyses MyHostPass::run(Module &M, ModuleAnalysisManager &AM) {
   json::Object Root;
   Root["launches"] = std::move(Launches);
 
-  if (!MyHostPassOutput.empty()) {
+  if (!OffloadHostAnalysisOutput.empty()) {
     std::error_code EC;
-    raw_fd_ostream OS(MyHostPassOutput, EC, sys::fs::OF_Text);
+    raw_fd_ostream OS(OffloadHostAnalysisOutput, EC, sys::fs::OF_Text);
     if (EC) {
-      errs() << "MyHostPass: failed to open output file '" << MyHostPassOutput
+      errs() << "OffloadHostAnalysisPass: failed to open output file '" << OffloadHostAnalysisOutput
              << "': " << EC.message() << "\n";
     } else {
       OS << formatv("{0:2}\n", json::Value(std::move(Root)));
