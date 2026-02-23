@@ -89,6 +89,8 @@
 #include "llvm/Transforms/Utils/Debugify.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
 #include "llvm/Transforms/Utils/MyDevicePass.h"
+#include "llvm/Transforms/Utils/MyDevicePass2.h"
+#include "llvm/Transforms/IPO/InferFunctionAttrs.h"
 #include <limits>
 #include <memory>
 #include <optional>
@@ -1063,7 +1065,8 @@ void EmitAssemblyHelper::RunOptimizationPipeline(
     if (LangOpts.CUDAIsDevice)
       PB.registerPipelineStartEPCallback(
           [](ModulePassManager &MPM, OptimizationLevel Level) {
-            MPM.addPass(MyDevicePass());
+            // MPM.addPass(InferFunctionAttrsPass());
+            MPM.addPass(MyDevicePass2());
             MPM.addPass(createModuleToFunctionPassAdaptor(
                 AlignmentFromAssumptionsPass()));
           });

@@ -4987,7 +4987,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       OffloadHostInfoInput) {
     // The JSON file is the OffloadHostInfoInput directly (TY_OffloadHostInfo).
     CmdArgs.push_back("-mllvm");
-    CmdArgs.push_back(Args.MakeArgString(Twine("-my-device-pass-input=") +
+    CmdArgs.push_back(Args.MakeArgString(Twine("-my-device-pass2-input=") +
                                          OffloadHostInfoInput->getFilename()));
   }
 

@@ -349,6 +349,7 @@
 #include "llvm/Transforms/Utils/HelloWorld.h"
 #include "llvm/Transforms/Utils/CudaAssumeAlignPass.h"
 #include "llvm/Transforms/Utils/MyDevicePass.h"
+#include "llvm/Transforms/Utils/MyDevicePass2.h"
 #include "llvm/Transforms/Utils/MyHostPass.h"
 #include "llvm/Transforms/Utils/IRNormalizer.h"
 #include "llvm/Transforms/Utils/InjectTLIMappings.h"

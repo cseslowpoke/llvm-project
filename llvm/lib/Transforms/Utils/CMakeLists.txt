@@ -67,6 +67,7 @@ add_llvm_component_library(LLVMTransformUtils
   ModuleUtils.cpp
   MoveAutoInit.cpp
   MyDevicePass.cpp
+  MyDevicePass2.cpp
   MyHostPass.cpp
   CudaAssumeAlignPass.cpp
   NameAnonGlobals.cpp
