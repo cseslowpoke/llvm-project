@@ -64,8 +64,12 @@ PreservedAnalyses OffloadParamAttributePass::run(Module &M, ModuleAnalysisManage
   LLVM_DEBUG(dbgs() << "OffloadParamAttributePass: received valid JSON (launches=" << Launches->size()
                     << ") from '" << OffloadParamAttributeInput << "'\n");
 
-  // Build map: kernel base name -> (arg index -> alignment)
-  StringMap<SmallVector<std::pair<unsigned, unsigned>, 8>> KernelArgAligns;
+  // Build map: kernel base name -> (arg index -> (alignment, allocationID))
+  struct ArgInfo {
+    unsigned Alignment = 0;
+    unsigned AllocationID = 0;
+  };
+  StringMap<SmallVector<std::pair<unsigned, ArgInfo>, 8>> KernelArgInfos;
 
   for (const json::Value &LV : *Launches) {
     const json::Object *LO = LV.getAsObject();
@@ -80,7 +84,7 @@ PreservedAnalyses OffloadParamAttributePass::run(Module &M, ModuleAnalysisManage
     if (!Args)
       continue;
 
-    auto &ArgAligns = KernelArgAligns[*KernelName];
+    auto &ArgInfoVec = KernelArgInfos[*KernelName];
     for (const json::Value &AV : *Args) {
       const json::Object *AO = AV.getAsObject();
       if (!AO)
@@ -89,22 +93,27 @@ PreservedAnalyses OffloadParamAttributePass::run(Module &M, ModuleAnalysisManage
       std::optional<int64_t> Idx = AO->getInteger("index");
       std::optional<int64_t> Align = AO->getInteger("knownAlignment");
       std::optional<bool> IsCudaMalloc = AO->getBoolean("cudaMallocDerived");
+      std::optional<int64_t> AllocID = AO->getInteger("allocationID");
 
-      // Only add alignment for cudaMalloc-derived pointers with known alignment > 1
-      if (Idx && Align && IsCudaMalloc && *IsCudaMalloc && *Align > 1) {
-        ArgAligns.push_back({static_cast<unsigned>(*Idx),
-                             static_cast<unsigned>(*Align)});
+      // Only process cudaMalloc-derived pointers
+      if (Idx && IsCudaMalloc && *IsCudaMalloc) {
+        ArgInfo Info;
+        if (Align && *Align > 1)
+          Info.Alignment = static_cast<unsigned>(*Align);
+        if (AllocID && *AllocID > 0)
+          Info.AllocationID = static_cast<unsigned>(*AllocID);
+        ArgInfoVec.push_back({static_cast<unsigned>(*Idx), Info});
       }
     }
   }
 
-  if (KernelArgAligns.empty())
+  if (KernelArgInfos.empty())
     return PreservedAnalyses::all();
 
   bool Changed = false;
   LLVMContext &Ctx = M.getContext();
 
-  // Find kernel functions and add alignment attributes
+  // Find kernel functions and add alignment/noalias attributes
   for (Function &F : M) {
     if (F.isDeclaration())
       continue;
@@ -112,11 +121,20 @@ PreservedAnalyses OffloadParamAttributePass::run(Module &M, ModuleAnalysisManage
     std::string Demangled = demangle(F.getName().str());
     StringRef BaseName = extractKernelBaseName(Demangled);
 
-    auto It = KernelArgAligns.find(BaseName);
-    if (It == KernelArgAligns.end())
+    auto It = KernelArgInfos.find(BaseName);
+    if (It == KernelArgInfos.end())
       continue;
 
-    for (const auto &[ArgIdx, Alignment] : It->second) {
+    // Collect allocation IDs to determine noalias relationships
+    // Arguments with different non-zero allocation IDs cannot alias
+    SmallVector<std::pair<unsigned, unsigned>, 8>
+        ArgAllocIDs; // (argIdx, allocID)
+    for (const auto &[ArgIdx, Info] : It->second) {
+      if (Info.AllocationID > 0)
+        ArgAllocIDs.push_back({ArgIdx, Info.AllocationID});
+    }
+
+    for (const auto &[ArgIdx, Info] : It->second) {
       if (ArgIdx >= F.arg_size())
         continue;
 
@@ -124,12 +142,36 @@ PreservedAnalyses OffloadParamAttributePass::run(Module &M, ModuleAnalysisManage
       if (!Arg->getType()->isPointerTy())
         continue;
 
-      // Add alignment attribute directly to the parameter
-      F.addParamAttr(ArgIdx, Attribute::getWithAlignment(Ctx, Align(Alignment)));
-      Changed = true;
+      // Add alignment attribute if available
+      if (Info.Alignment > 1) {
+        F.addParamAttr(ArgIdx,
+                       Attribute::getWithAlignment(Ctx, Align(Info.Alignment)));
+        Changed = true;
+        LLVM_DEBUG(dbgs() << "OffloadParamAttributePass: added align("
+                          << Info.Alignment << ") to arg " << ArgIdx << " of "
+                          << F.getName() << "\n");
+      }
 
-      LLVM_DEBUG(dbgs() << "OffloadParamAttributePass: added align(" << Alignment << ") to arg "
-                        << ArgIdx << " of " << F.getName() << "\n");
+      // Add noalias attribute if this argument has a unique allocation ID
+      // that differs from all other arguments' allocation IDs
+      if (Info.AllocationID > 0) {
+        bool CanBeNoAlias = true;
+        for (const auto &[OtherIdx, OtherAllocID] : ArgAllocIDs) {
+          if (OtherIdx != ArgIdx && OtherAllocID == Info.AllocationID) {
+            // Same allocation ID means they might alias
+            CanBeNoAlias = false;
+            break;
+          }
+        }
+        if (CanBeNoAlias) {
+          F.addParamAttr(ArgIdx, Attribute::NoAlias);
+          Changed = true;
+          LLVM_DEBUG(dbgs()
+                     << "OffloadParamAttributePass: added noalias to arg "
+                     << ArgIdx << " of " << F.getName()
+                     << " (allocationID=" << Info.AllocationID << ")\n");
+        }
+      }
     }
   }
 

@@ -67,6 +67,7 @@ add_llvm_component_library(LLVMTransformUtils
   ModuleUtils.cpp
   MoveAutoInit.cpp
   OffloadAlignmentAnalysis.cpp
+  OffloadAliasAnalysis.cpp
   OffloadAssumeInjectionPass.cpp
   OffloadParamAttributePass.cpp
   OffloadHostAnalysisPass.cpp

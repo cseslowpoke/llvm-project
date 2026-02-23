@@ -15,7 +15,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Transforms/Utils/OffloadHostAnalysisPass.h"
-#include "OffloadAlignmentAnalysis.h"  // Internal alignment analysis module
+#include "OffloadAliasAnalysis.h"     // Internal alias analysis module
+#include "OffloadAlignmentAnalysis.h" // Internal alignment analysis module
 
 #include "llvm/ADT/SmallPtrSet.h"
 
@@ -115,6 +116,7 @@ struct CudaKernelArgInfo {
   bool IsCudaMallocDerived = false;      ///< True if derived from cudaMalloc
   std::string CudaMallocOutParamName;    ///< Name of cudaMalloc output param
   uint64_t KnownAlignment = 0;           ///< Best known alignment in bytes
+  unsigned AllocationID = 0;             ///< Unique ID for noalias analysis
 };
 
 /// Information about a cudaLaunchKernel call site.
@@ -218,6 +220,11 @@ dumpCudaLaunchKernelArgs(CallBase &CB, AssumptionCache &AC, DominatorTree &DT) {
   // alignment computation. See OffloadAlignmentAnalysis.h for details.
   OffloadAlignmentAnalyzer AlignAnalyzer(*Caller, AC, DT);
 
+  // Create alias analyzer for this function.
+  // This tracks which cudaMalloc allocation each argument comes from.
+  // Arguments from different allocations are guaranteed to not alias.
+  OffloadAliasAnalyzer AliasAnalyzer(*Caller);
+
   auto RecordStore = [&](unsigned Index, Value *Stored) {
     IndexToValue.push_back({Index, Stored});
   };
@@ -285,6 +292,13 @@ dumpCudaLaunchKernelArgs(CallBase &CB, AssumptionCache &AC, DominatorTree &DT) {
     Arg.IsCudaMallocDerived = AlignInfo.IsCudaMallocDerived;
     Arg.CudaMallocOutParamName = AlignInfo.CudaMallocOutParamName;
     Arg.KnownAlignment = AlignInfo.KnownAlignment;
+
+    // Delegate alias analysis to the internal OffloadAliasAnalyzer.
+    // This assigns a unique allocation ID to arguments from cudaMalloc.
+    // Arguments with different IDs are guaranteed to not alias.
+    KernelArgAliasInfo AliasInfo =
+        AliasAnalyzer.analyzeArgumentAlias(IV.second);
+    Arg.AllocationID = AliasInfo.AllocationID;
 
     Info.Args.push_back(std::move(Arg));
   }
@@ -376,6 +390,8 @@ PreservedAnalyses OffloadHostAnalysisPass::run(Module &M, ModuleAnalysisManager 
       if (!AI.CudaMallocOutParamName.empty())
         Arg["cudaMallocOutParam"] = AI.CudaMallocOutParamName;
       Arg["knownAlignment"] = static_cast<int64_t>(AI.KnownAlignment);
+      if (AI.AllocationID > 0)
+        Arg["allocationID"] = static_cast<int64_t>(AI.AllocationID);
       Args.push_back(std::move(Arg));
     }
     Launch["args"] = std::move(Args);
