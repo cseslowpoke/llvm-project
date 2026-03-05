@@ -23,6 +23,14 @@ static cl::opt<std::string> OffloadParamAttributeInput(
     "offload-param-attribute-input", cl::Hidden, cl::init(""),
     cl::desc("JSON file with kernel launch info for OffloadParamAttributePass"));
 
+static cl::opt<bool> OffloadParamAttributeAlign(
+    "offload-param-attribute-align", cl::Hidden, cl::init(true),
+    cl::desc("Add alignment attributes to kernel parameters (default: true)"));
+
+static cl::opt<bool> OffloadParamAttributeNoAlias(
+    "offload-param-attribute-noalias", cl::Hidden, cl::init(true),
+    cl::desc("Add noalias attributes to kernel parameters (default: true)"));
+
 /// Extract the base function name from a demangled name.
 static StringRef extractKernelBaseName(StringRef Demangled) {
   if (Demangled.starts_with("__device_stub__"))
@@ -142,8 +150,8 @@ PreservedAnalyses OffloadParamAttributePass::run(Module &M, ModuleAnalysisManage
       if (!Arg->getType()->isPointerTy())
         continue;
 
-      // Add alignment attribute if available
-      if (Info.Alignment > 1) {
+      // Add alignment attribute if available and enabled
+      if (OffloadParamAttributeAlign && Info.Alignment > 1) {
         F.addParamAttr(ArgIdx,
                        Attribute::getWithAlignment(Ctx, Align(Info.Alignment)));
         Changed = true;
@@ -152,9 +160,9 @@ PreservedAnalyses OffloadParamAttributePass::run(Module &M, ModuleAnalysisManage
                           << F.getName() << "\n");
       }
 
-      // Add noalias attribute if this argument has a unique allocation ID
-      // that differs from all other arguments' allocation IDs
-      if (Info.AllocationID > 0) {
+      // Add noalias attribute if enabled and this argument has a unique
+      // allocation ID that differs from all other arguments' allocation IDs
+      if (OffloadParamAttributeNoAlias && Info.AllocationID > 0) {
         bool CanBeNoAlias = true;
         for (const auto &[OtherIdx, OtherAllocID] : ArgAllocIDs) {
           if (OtherIdx != ArgIdx && OtherAllocID == Info.AllocationID) {
