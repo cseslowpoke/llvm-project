@@ -4972,13 +4972,83 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     assert(Inputs.size() == 1 && "OffloadHostInfoJobAction expects a single input");
     OptArgs.push_back(Inputs[0].getFilename());
     OptArgs.push_back("-passes=function(cuda-assume-align),offload-host-analysis");
-    // Output JSON for device pass. Use -disable-output since we don't need .bc
-    // (host compiles from source, not from this .bc).
+    // Write JSON analysis output as a side-effect for the device pass.
     OptArgs.push_back(Args.MakeArgString(Twine("-offload-host-analysis-output=") + Output.getFilename()));
-    OptArgs.push_back("-disable-output");
+    // Save the host .bc (with dummy fatbin + registration code) to the path
+    // specified by -foffload-host-bc=. The final host compile will use this
+    // .bc and replace the dummy fatbin with the real one, avoiding a
+    // redundant re-parse of the source.
+    if (const Arg *A = Args.getLastArg(options::OPT_foffload_host_bc_EQ)) {
+      OptArgs.push_back("-o");
+      OptArgs.push_back(A->getValue());
+    } else {
+      OptArgs.push_back("-disable-output");
+    }
     C.addCommand(std::make_unique<Command>(JA, *this, ResponseFileSupport::None(),
                                            Opt, OptArgs, Inputs, Output));
     return;
+  }
+
+  // When -foffload-host-info-json is enabled and this is the final host
+  // compilation (has CudaDeviceInput or HostOffloadingInputs with a fatbin,
+  // plus a saved host .bc via -foffload-host-bc=), skip re-parsing the .cu
+  // source. Instead, use the saved host .bc (which has dummy fatbin + all CUDA
+  // registration code) and replace the dummy fatbin data with the real fatbin
+  // via the replace-cuda-fatbin LLVM pass.
+  if (const Arg *HostBCArg = Args.getLastArg(options::OPT_foffload_host_bc_EQ)) {
+    // Get the real fatbin path from either the old driver path (CudaDeviceInput)
+    // or the new driver path (HostOffloadingInputs).
+    const char *RealFatbinPath = nullptr;
+    if (IsCuda && !IsCudaDevice) {
+      if (CudaDeviceInput)
+        RealFatbinPath = CudaDeviceInput->getFilename();
+      else if (!HostOffloadingInputs.empty())
+        RealFatbinPath = HostOffloadingInputs.front().getFilename();
+    }
+    if (RealFatbinPath) {
+      // Step 1: opt — replace dummy fatbin data with real fatbin → .bc
+      const char *Opt = Args.MakeArgString(TC.GetProgramPath("opt"));
+      const char *ReplacedBC = C.addTempFile(
+          Args.MakeArgString(Twine(HostBCArg->getValue()) + ".replaced.bc"));
+      {
+        ArgStringList OptArgs;
+        OptArgs.push_back(HostBCArg->getValue());
+        OptArgs.push_back("-passes=replace-cuda-fatbin");
+        OptArgs.push_back(Args.MakeArgString(
+            Twine("-replace-cuda-fatbin-file=") + RealFatbinPath));
+        OptArgs.push_back("-o");
+        OptArgs.push_back(ReplacedBC);
+        C.addCommand(std::make_unique<Command>(JA, *this,
+                                               ResponseFileSupport::None(),
+                                               Opt, OptArgs, Inputs, Output));
+      }
+
+      // Step 2: cc1 -x ir — backend + codegen the .bc → .o
+      // The Driver collapsed Compile+Backend+Assemble into one step,
+      // so we need to produce the final .o here.
+      {
+        const char *CC1 = Args.MakeArgString(TC.GetProgramPath("clang"));
+        ArgStringList CC1Args;
+        CC1Args.push_back("-cc1");
+        CC1Args.push_back("-triple");
+        CC1Args.push_back(Args.MakeArgString(Triple.getTriple()));
+        CC1Args.push_back("-emit-obj");
+        CC1Args.push_back("-mrelocation-model");
+        CC1Args.push_back("pic");
+        CC1Args.push_back("-pic-level");
+        CC1Args.push_back("2");
+        CC1Args.push_back("-pic-is-pie");
+        CC1Args.push_back("-o");
+        CC1Args.push_back(Output.getFilename());
+        CC1Args.push_back("-x");
+        CC1Args.push_back("ir");
+        CC1Args.push_back(ReplacedBC);
+        C.addCommand(std::make_unique<Command>(JA, *this,
+                                               ResponseFileSupport::None(),
+                                               CC1, CC1Args, Inputs, Output));
+      }
+      return;
+    }
   }
 
   CmdArgs.push_back("-cc1");
@@ -7747,6 +7817,16 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   if ((IsCuda || IsHIP) && CudaDeviceInput) {
     CmdArgs.push_back("-fcuda-include-gpubinary");
     CmdArgs.push_back(CudaDeviceInput->getFilename());
+  } else if (IsCuda && !IsCudaDevice && !CudaDeviceInput &&
+             HostOffloadingInputs.empty() &&
+             Args.hasArg(options::OPT_foffload_host_info_json)) {
+    // First host compile for analysis: use /dev/null as a dummy fatbin so
+    // that CodeGen generates all CUDA registration code (__cuda_module_ctor,
+    // __cudaRegisterFatBinary, __cuda_register_globals, etc.) in the .bc.
+    // The dummy fatbin data will be replaced later by ReplaceCudaFatbinPass.
+    // Only applies when no real fatbin is available (HostOffloadingInputs empty).
+    CmdArgs.push_back("-fcuda-include-gpubinary");
+    CmdArgs.push_back("/dev/null");
   } else if (!HostOffloadingInputs.empty()) {
     if (IsCuda && !IsRDCMode) {
       assert(HostOffloadingInputs.size() == 1 && "Only one input expected");

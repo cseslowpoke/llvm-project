@@ -1153,6 +1153,9 @@ def offload_targets_EQ : CommaJoined<["--"], "offload-targets=">,
 def foffload_host_info_json : Flag<["-"], "foffload-host-info-json">,
   Visibility<[ClangOption]>,
   HelpText<"Emit CUDA offload host info JSON (via LLVM passes) and forward it to device compilation.">;
+def foffload_host_bc_EQ : Joined<["-"], "foffload-host-bc=">,
+  Flags<[NoXarchOption, HelpHidden]>, Visibility<[ClangOption]>,
+  HelpText<"(internal) Path to saved host .bc with dummy fatbin for offload pipeline">;
 
 def offload_arch_EQ : CommaJoined<["--"], "offload-arch=">,
   Visibility<[ClangOption, FlangOption]>,

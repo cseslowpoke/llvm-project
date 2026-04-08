@@ -351,6 +351,7 @@
 #include "llvm/Transforms/Utils/OffloadAssumeInjectionPass.h"
 #include "llvm/Transforms/Utils/OffloadParamAttributePass.h"
 #include "llvm/Transforms/Utils/OffloadHostAnalysisPass.h"
+#include "llvm/Transforms/Utils/ReplaceCudaFatbinPass.h"
 #include "llvm/Transforms/Utils/IRNormalizer.h"
 #include "llvm/Transforms/Utils/InjectTLIMappings.h"
 #include "llvm/Transforms/Utils/InstructionNamer.h"

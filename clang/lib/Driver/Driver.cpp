@@ -5097,10 +5097,28 @@ Action *Driver::BuildOffloadingActions(Compilation &C,
     return A->getType() == types::TY_Nothing;
   }) && isa<CompileJobAction>(HostAction);
 
-  // When -foffload-host-info-json is enabled, HostInfoAction generates JSON
-  // as a side effect. We do NOT use it as the host dependency because
-  // -x ir with CUDA doesn't correctly handle -fcuda-include-gpubinary embedding.
-  // The host continues compiling from source.
+  // Old implementation: When -foffload-host-info-json is enabled, HostInfoAction generates JSON
+  // // as a side effect. We do NOT use it as the host dependency because
+  // // -x ir with CUDA doesn't correctly handle -fcuda-include-gpubinary embedding.
+  // // The host continues compiling from source.
+  // // (void)HostInfoAction;
+
+  // When -foffload-host-info-json is enabled, HostInfoAction produces:
+  //   1. JSON (for device-side optimization passes)
+  //   2. A host .bc with dummy fatbin + full CUDA registration code (side effect)
+  // We create a deterministic temp path for the saved .bc and pass it via
+  // -foffload-host-bc=<path> so both the OffloadHostInfoJobAction handler
+  // (which writes it) and the final host compile handler (which reads it)
+  // can find it. We do NOT add HostInfoAction to DDep because it is a host
+  // action and propagateDeviceOffloadInfo would assert on it.
+  if (HostInfoAction) {
+    const char *SavedBCPath = C.addTempFile(
+        C.getArgs().MakeArgString(GetTemporaryPath("offload-host", "bc")));
+    Args.AddJoinedArg(nullptr,
+                      C.getDriver().getOpts().getOption(
+                          options::OPT_foffload_host_bc_EQ),
+                      SavedBCPath);
+  }
   (void)HostInfoAction;
 
   OffloadAction::HostDependence HDep(

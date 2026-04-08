@@ -71,6 +71,7 @@ add_llvm_component_library(LLVMTransformUtils
   OffloadAssumeInjectionPass.cpp
   OffloadParamAttributePass.cpp
   OffloadHostAnalysisPass.cpp
+  ReplaceCudaFatbinPass.cpp
   CudaAssumeAlignPass.cpp
   NameAnonGlobals.cpp
   PredicateInfo.cpp
