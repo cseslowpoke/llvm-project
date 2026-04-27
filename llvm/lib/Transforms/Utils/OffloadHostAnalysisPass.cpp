@@ -19,6 +19,7 @@
 #include "OffloadAlignmentAnalysis.h" // Internal alignment analysis module
 
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/Analysis/BlockGridDimensionAnalysis.h"
 
 #define DEBUG_TYPE "offload-host-analysis"
 #include "llvm/ADT/SmallVector.h"
@@ -126,6 +127,13 @@ struct CudaLaunchKernelInfo {
   std::string GuessedOriginalKernelName; ///< Demangled kernel name (guessed)
   std::string KernelArgsAllocaName;      ///< Name of the args array alloca
   SmallVector<CudaKernelArgInfo, 16> Args; ///< Per-argument information
+  /// Block/grid dimensions recovered from BlockGridDimensionAnalysis. Each
+  /// component is std::nullopt when the dimension cannot be determined
+  /// statically. Populated only when the launch's HostFunctionName matches a
+  /// stub key produced by BlockGridDimensionAnalysis.
+  Dim3 BlockDim;
+  Dim3 GridDim;
+  bool HasBlockGridDim = false;
 };
 
 /// Analyze a cudaLaunchKernel call and extract argument information.
@@ -165,10 +173,10 @@ dumpCudaLaunchKernelArgs(CallBase &CB, AssumptionCache &AC, DominatorTree &DT) {
   }
 
   LLVM_DEBUG(dbgs() << "    resolved kernel: " << KF->getName() << "\n");
-  if (KF->getName() == Caller->getName()) {
-    LLVM_DEBUG(dbgs() << "    caller is stub kernel function\n");
-    return std::nullopt;
-  }
+  // Note: in standard clang CUDA host codegen, KF == Caller is the *normal*
+  // case (cudaLaunchKernel is emitted inside the stub itself, with the stub
+  // as the launch handle). The demangling/__device_stub__ stripping below is
+  // designed for exactly this shape, so do not bail out here.
 
   Info.ResolvedKernelMangled = KF->getName().str();
 
@@ -203,10 +211,27 @@ dumpCudaLaunchKernelArgs(CallBase &CB, AssumptionCache &AC, DominatorTree &DT) {
     Info.KernelArgsAllocaName = AI->getName().str();
 
   auto *AT = dyn_cast<ArrayType>(AI->getAllocatedType());
+  // In optimized IR (e.g., -O3), the kernel args array may be represented as
+  // "alloca ptr, i64 N" instead of "alloca [N x ptr]". Handle both cases.
   if (!AT) {
-    LLVM_DEBUG(dbgs() << "  kernel args alloca is not an array: ";
-               AI->getAllocatedType()->print(dbgs()); dbgs() << "\n");
-    return std::nullopt;
+    if (!AI->getAllocatedType()->isPointerTy()) {
+      LLVM_DEBUG(dbgs() << "  kernel args alloca is not an array or pointer: ";
+                 AI->getAllocatedType()->print(dbgs()); dbgs() << "\n");
+      return std::nullopt;
+    }
+    // For "alloca ptr, i64 N", treat it as an array of N pointers.
+    // The array size is encoded in the alloca instruction itself.
+    auto *ArraySizeC = dyn_cast<ConstantInt>(AI->getArraySize());
+    if (!ArraySizeC) {
+      LLVM_DEBUG(dbgs() << "  kernel args alloca has non-constant array size\n");
+      return std::nullopt;
+    }
+    uint64_t ArraySize = ArraySizeC->getZExtValue();
+    if (ArraySize <= 1) {
+      LLVM_DEBUG(dbgs() << "  kernel args alloca is a single pointer, not an array\n");
+      return std::nullopt;
+    }
+    LLVM_DEBUG(dbgs() << "  kernel args alloca is ptr array with size " << ArraySize << "\n");
   }
 
   LLVM_DEBUG(dbgs() << "  kernel args array elements (from stores):\n");
@@ -330,6 +355,12 @@ PreservedAnalyses OffloadHostAnalysisPass::run(Module &M, ModuleAnalysisManager 
   auto &FAMProxy = AM.getResult<FunctionAnalysisManagerModuleProxy>(M);
   FunctionAnalysisManager &FAM = FAMProxy.getManager();
 
+  // Pull block/grid dimensions per stub function. Keyed by stub name, which
+  // matches the function that contains the cudaLaunchKernel call in standard
+  // clang CUDA host codegen.
+  const auto &BlockGridDims =
+      AM.getResult<BlockGridDimensionAnalysis>(M);
+
   SmallVector<CallBase *, 16> CudaLaunchKernels;
   SmallVector<CudaLaunchKernelInfo, 16> LaunchInfos;
 
@@ -345,11 +376,22 @@ PreservedAnalyses OffloadHostAnalysisPass::run(Module &M, ModuleAnalysisManager 
 
     for (auto &BB: F) {
       for (auto &I: BB) {
+        auto AnnotateAndPush = [&](CallBase &CB) {
+          if (auto Info = dumpCudaLaunchKernelArgs(CB, AC, DT)) {
+            auto It = BlockGridDims.find(Info->HostFunctionName);
+            if (It != BlockGridDims.end()) {
+              Info->BlockDim = It->second.BlockDim;
+              Info->GridDim = It->second.GridDim;
+              Info->HasBlockGridDim = true;
+            }
+            LaunchInfos.push_back(std::move(*Info));
+          }
+        };
+
         if (auto *CI = dyn_cast<CallInst>(&I)) {
           if (isCudaLaunchKernelCall(*CI)) {
             CudaLaunchKernels.push_back(CI);
-            if (auto Info = dumpCudaLaunchKernelArgs(*CI, AC, DT))
-              LaunchInfos.push_back(std::move(*Info));
+            AnnotateAndPush(*CI);
           }
           continue;
         }
@@ -357,8 +399,7 @@ PreservedAnalyses OffloadHostAnalysisPass::run(Module &M, ModuleAnalysisManager 
         if (auto *II = dyn_cast<InvokeInst>(&I)) {
           if (isCudaLaunchKernelCall(*II)) {
             CudaLaunchKernels.push_back(II);
-            if (auto Info = dumpCudaLaunchKernelArgs(*II, AC, DT))
-              LaunchInfos.push_back(std::move(*Info));
+            AnnotateAndPush(*II);
           }
           continue;
         }
@@ -395,6 +436,23 @@ PreservedAnalyses OffloadHostAnalysisPass::run(Module &M, ModuleAnalysisManager 
       Args.push_back(std::move(Arg));
     }
     Launch["args"] = std::move(Args);
+
+    if (LI.HasBlockGridDim) {
+      auto DimToJSON = [](const Dim3 &D) {
+        auto Field = [](const std::optional<unsigned> &V) -> json::Value {
+          if (!V)
+            return nullptr;
+          return static_cast<int64_t>(*V);
+        };
+        return json::Object{
+            {"x", Field(D.X)},
+            {"y", Field(D.Y)},
+            {"z", Field(D.Z)},
+        };
+      };
+      Launch["block_dim"] = DimToJSON(LI.BlockDim);
+      Launch["grid_dim"] = DimToJSON(LI.GridDim);
+    }
     Launches.push_back(std::move(Launch));
   }
 

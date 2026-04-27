@@ -18,6 +18,7 @@
 #ifndef MODULE_ANALYSIS
 #define MODULE_ANALYSIS(NAME, CREATE_PASS)
 #endif
+MODULE_ANALYSIS("block-grid-dimension-analysis", BlockGridDimensionAnalysis())
 MODULE_ANALYSIS("callgraph", CallGraphAnalysis())
 MODULE_ANALYSIS("collector-metadata", CollectorMetadataAnalysis())
 MODULE_ANALYSIS("ctx-prof-analysis", CtxProfAnalysis())
@@ -142,6 +143,10 @@ MODULE_PASS("print-must-be-executed-contexts",
             MustBeExecutedContextPrinterPass(errs()))
 MODULE_PASS("print-profile-summary", ProfileSummaryPrinterPass(errs()))
 MODULE_PASS("print-stack-safety", StackSafetyGlobalPrinterPass(errs()))
+MODULE_PASS("print<block-grid-dimension-analysis>",
+            BlockGridDimensionAnalysisPrinter(errs()))
+MODULE_PASS("export-json<block-grid-dimension-analysis>",
+            BlockGridDimensionAnalysisJSONExporter(outs()))
 MODULE_PASS("print<dxil-metadata>", DXILMetadataAnalysisPrinterPass(errs()))
 MODULE_PASS("print<dxil-resources>", DXILResourcePrinterPass(errs()))
 MODULE_PASS("print<inline-advisor>", InlineAdvisorAnalysisPrinterPass(errs()))
