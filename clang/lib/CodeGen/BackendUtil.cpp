@@ -89,6 +89,7 @@
 #include "llvm/Transforms/Utils/Debugify.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
 #include "llvm/Transforms/Utils/OffloadAssumeInjectionPass.h"
+#include "llvm/Transforms/Utils/OffloadFuncAttributePass.h"
 #include "llvm/Transforms/Utils/OffloadParamAttributePass.h"
 #include "llvm/Transforms/IPO/InferFunctionAttrs.h"
 #include <limits>
@@ -1067,6 +1068,7 @@ void EmitAssemblyHelper::RunOptimizationPipeline(
           [](ModulePassManager &MPM, OptimizationLevel Level) {
             // MPM.addPass(InferFunctionAttrsPass());
             MPM.addPass(OffloadParamAttributePass());
+            MPM.addPass(OffloadFuncAttributePass());
             MPM.addPass(createModuleToFunctionPassAdaptor(
                 AlignmentFromAssumptionsPass()));
           });

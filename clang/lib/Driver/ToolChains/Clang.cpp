@@ -5059,6 +5059,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-mllvm");
     CmdArgs.push_back(Args.MakeArgString(Twine("-offload-param-attribute-input=") +
                                          OffloadHostInfoInput->getFilename()));
+    CmdArgs.push_back("-mllvm");
+    CmdArgs.push_back(Args.MakeArgString(Twine("-offload-func-attribute-input=") +
+                                         OffloadHostInfoInput->getFilename()));
   }
 
   // Add the "effective" target triple.
